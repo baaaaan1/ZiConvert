@@ -6,10 +6,40 @@ import { ASCII_END, ASCII_START, encodeZiV3, inspectZi, LATIN1_END, LATIN1_START
 import { encodeZiV5, inspectZiV5 } from './lib/zi/v5'
 import type { GlyphBitmap } from './lib/zi/types'
 
-type FontFile = { name: string; family: string; url: string; face: FontFace | null; size?: number; source?: string }
+type FontFile = { name: string; family: string; url: string; face: FontFace | null; size?: number; source?: string; weights: number[]; fontsource?: FontsourceFont }
 type FontsourceFont = { id: string; family: string; version?: string; subsets?: string[]; weights?: number[] }
 type CharacterMode = 'ascii' | 'all' | 'custom'
 type ZiVersion = 3 | 5
+const FONT_WEIGHT_LABELS: Record<number, string> = { 100: 'Thin', 200: 'Extra Light', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semi Bold', 700: 'Bold', 800: 'Extra Bold', 900: 'Black' }
+const STANDARD_FONT_WEIGHTS = Object.keys(FONT_WEIGHT_LABELS).map(Number)
+
+function getLocalFontWeights(data: ArrayBuffer): number[] {
+  const view = new DataView(data)
+  const tableCount = view.getUint16(4)
+  const tables = new Map<string, number>()
+  for (let index = 0; index < tableCount; index += 1) {
+    const offset = 12 + index * 16
+    const tag = String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3))
+    tables.set(tag, view.getUint32(offset + 8))
+  }
+  const os2 = tables.get('OS/2')
+  const staticWeight = os2 === undefined ? 400 : view.getUint16(os2 + 4)
+  const fvar = tables.get('fvar')
+  if (fvar === undefined) return [staticWeight]
+  const axesOffset = fvar + view.getUint16(fvar + 4)
+  const axisCount = view.getUint16(fvar + 8)
+  const axisSize = view.getUint16(fvar + 10)
+  for (let index = 0; index < axisCount; index += 1) {
+    const axis = axesOffset + index * axisSize
+    const tag = String.fromCharCode(view.getUint8(axis), view.getUint8(axis + 1), view.getUint8(axis + 2), view.getUint8(axis + 3))
+    if (tag !== 'wght') continue
+    const minimum = view.getInt32(axis + 4) / 65536
+    const maximum = view.getInt32(axis + 12) / 65536
+    const weights = STANDARD_FONT_WEIGHTS.filter(weight => weight >= minimum && weight <= maximum)
+    return weights.length ? weights : [Math.round(minimum)]
+  }
+  return [staticWeight]
+}
 
 const defaults = { width: 24, height: 32 }
 const SIZE_PRESETS = [
@@ -67,6 +97,7 @@ function App() {
   const [height, setHeight] = useState(defaults.height)
   const [fontSize, setFontSize] = useState(26)
   const [rasterizedFontSize, setRasterizedFontSize] = useState(26)
+  const [fontWeight, setFontWeight] = useState(400)
   const [characterMode, setCharacterMode] = useState<CharacterMode>('ascii')
   const [customCharacters, setCustomCharacters] = useState('0123456789')
   const [fontSource, setFontSource] = useState<'local' | 'fontsource'>('local')
@@ -111,7 +142,7 @@ function App() {
     if (!font) return
     try {
       const codePoints = getCharacterSet(characterMode, customCharacters)
-      const result = rasterizeCharacters(font.family, width, height, codePoints, fontSize)
+      const result = rasterizeCharacters(font.family, width, height, codePoints, fontSize, fontWeight)
       setGlyphData(result.glyphs)
       setClipped(result.clipped)
       setRasterizedFontSize(result.fontSize)
@@ -120,7 +151,7 @@ function App() {
       setError(cause instanceof Error ? cause.message : 'The font could not be rendered.')
       setGlyphData([])
     }
-  }, [font, width, height, fontSize, characterMode, customCharacters])
+  }, [font, width, height, fontSize, fontWeight, characterMode, customCharacters])
 
   useEffect(() => {
     if (fontSource !== 'fontsource') return
@@ -167,7 +198,7 @@ function App() {
     try { return getCharacterSet(characterMode, customCharacters) } catch { return [] }
   }, [characterMode, customCharacters])
   const characterScope = characterMode === 'ascii' ? 'ASCII' : characterMode === 'all' ? 'Latin1' : 'Custom'
-  const filenameSuffix = `-${rasterizedFontSize}px-${characterScope}`
+  const filenameSuffix = `-${rasterizedFontSize}px-${fontWeight}-${characterScope}`
   const outputName = `${safeName(fontName)}${filenameSuffix}`
   const estimatedSize = glyphData.length
     ? ziVersion === 3
@@ -216,7 +247,8 @@ function App() {
     const url = URL.createObjectURL(file)
     const family = `ZiFont_${Date.now()}`
     try {
-      const face = new FontFace(family, `url(${url})`)
+      const weights = getLocalFontWeights(await file.arrayBuffer())
+      const face = new FontFace(family, `url(${url})`, { weight: weights.length > 1 ? `${weights[0]} ${weights.at(-1)}` : String(weights[0]) })
       await face.load()
       document.fonts.add(face)
       setFont(current => {
@@ -224,8 +256,9 @@ function App() {
           if (current.url.startsWith('blob:')) URL.revokeObjectURL(current.url)
           if (current.face) document.fonts.delete(current.face)
         }
-        return { name: file.name, family, url, face, size: file.size }
+        return { name: file.name, family, url, face, size: file.size, weights }
       })
+      setFontWeight(weights.reduce((closest, candidate) => Math.abs(candidate - fontWeight) < Math.abs(closest - fontWeight) ? candidate : closest))
       setFontName(safeName(file.name.replace(/\.(ttf|otf)$/i, '')))
       setError('')
       setNotice('Font is ready to process in your browser.')
@@ -235,15 +268,17 @@ function App() {
     }
   }
 
-  async function loadFontsource(result: FontsourceFont) {
+  async function loadFontsource(result: FontsourceFont, requestedWeight = fontWeight) {
     const family = `ZiFont_${result.id}_${Date.now()}`
     const subset = 'latin'
-    const weight = result.weights?.includes(400) ? 400 : result.weights?.[0] ?? 400
+    const weight = result.weights?.length
+      ? result.weights.reduce((closest, candidate) => Math.abs(candidate - requestedWeight) < Math.abs(closest - requestedWeight) ? candidate : closest)
+      : 400
     const version = result.version && /^\d+\.\d+\.\d+$/.test(result.version) ? result.version : 'latest'
     const url = `https://cdn.jsdelivr.net/fontsource/fonts/${result.id}@${version}/${subset}-${weight}-normal.woff2`
     try {
       setError('')
-      const face = new FontFace(family, `url(${url})`)
+      const face = new FontFace(family, `url(${url})`, { weight: String(weight) })
       await face.load()
       document.fonts.add(face)
       setFont(current => {
@@ -251,8 +286,9 @@ function App() {
           if (current.url.startsWith('blob:')) URL.revokeObjectURL(current.url)
           if (current.face) document.fonts.delete(current.face)
         }
-        return { name: result.family, family, url, face, source: 'Fontsource CDN' }
+        return { name: result.family, family, url, face, source: 'Fontsource CDN', weights: result.weights?.length ? result.weights : [weight], fontsource: result }
       })
+      setFontWeight(weight)
       setFontName(safeName(result.family))
       setNotice(`${result.family} loaded from the Fontsource CDN.`)
     } catch {
@@ -293,6 +329,11 @@ function App() {
   function resetFont() {
     clearFont()
     setError('')
+  }
+
+  function changeFontWeight(weight: number) {
+    setFontWeight(weight)
+    if (font?.fontsource) void loadFontsource(font.fontsource, weight)
   }
 
   return (
@@ -382,6 +423,7 @@ function App() {
             <label className="field"><span>Height <small>PX</small></span><span className="number-wrap"><input type="number" min="1" max="255" value={height} onChange={event => setHeight(Number(event.target.value))} /><span>↕</span></span></label>
           </div>
           <label className="field font-size-field"><span>Quick font size <small>PRESET</small></span><select className="text-input preset-select" value={SIZE_PRESETS.findIndex(preset => preset.fontSize === fontSize && preset.width === width && preset.height === height)} onChange={event => applyPreset(Number(event.target.value))}><option value={-1}>Custom dimensions</option>{SIZE_PRESETS.map((preset, index) => <option key={preset.fontSize} value={index}>{preset.label} · cell {preset.width} × {preset.height}</option>)}</select></label>
+          {font && <label className="field font-size-field"><span>Font weight <small>{font.weights.length} AVAILABLE</small></span><select className="text-input preset-select" value={fontWeight} onChange={event => changeFontWeight(Number(event.target.value))}>{font.weights.map(weight => <option key={weight} value={weight}>{FONT_WEIGHT_LABELS[weight] ?? `Weight ${weight}`} · {weight}</option>)}</select></label>}
           {rasterizedFontSize < fontSize && <p className="field-help">Font otomatis disesuaikan ke {rasterizedFontSize} px agar semua glyph muat di dalam cell {width} × {height} px.</p>}
 
           <div className="section-divider" />
@@ -435,7 +477,7 @@ function App() {
           </div>
           <div className="simulator-output">
             <div className="stage-toolbar"><span><span className="stage-dot" />FIXED CELL · {font ? font.name : 'NO FONT LOADED'}</span><span>{width} × {height} PX</span></div>
-            {font ? <div className="typing-cells" aria-label="Typing preview" style={{ '--cell-width': `${width * simulatorScale}px`, '--cell-height': `${height * simulatorScale}px`, '--cell-font-size': `${rasterizedFontSize * simulatorScale}px`, '--preview-font': font.family } as CSSProperties}>
+            {font ? <div className="typing-cells" aria-label="Typing preview" style={{ '--cell-width': `${width * simulatorScale}px`, '--cell-height': `${height * simulatorScale}px`, '--cell-font-size': `${rasterizedFontSize * simulatorScale}px`, '--preview-font': font.family, '--preview-font-weight': fontWeight } as CSSProperties}>
               {simulatorCharacters.length ? simulatorCharacters.map((character, index) => character === '\n' ? <span className="typing-break" key={`${index}-break`} /> : <span className={`typing-cell ${unsupportedCharacters.includes(character) ? 'unsupported' : ''}`} key={`${index}-${character}`} title={unsupportedCharacters.includes(character) ? `U+${character.codePointAt(0)!.toString(16).toUpperCase()} is outside the selected character set` : undefined}>{character === ' ' ? <i /> : character}</span>) : <span className="simulator-placeholder">Start typing to test your font...</span>}
             </div> : <div className="simulator-empty"><Type size={19} /><span>Load a font to preview your typing.</span></div>}
             <div className="simulator-meta"><span><b>{simulatorCharacters.length}</b> characters</span><span><b>{width} × {height}</b> px cell</span><span className={unsupportedCharacters.length ? 'unsupported-note' : ''}>{unsupportedCharacters.length ? `${unsupportedCharacters.length} character(s) outside character set` : 'All characters included'}</span></div>

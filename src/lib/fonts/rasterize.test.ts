@@ -15,7 +15,8 @@ function mockCanvas(touchesAtFontSize: (fontSize: number, character: string) => 
     }),
     measureText: vi.fn(() => ({ width: 6 })),
     fillText: vi.fn((character: string, _x: number, _y: number) => {
-      if (touchesAtFontSize(Number.parseInt(font, 10), character)) pixels[3] = 255
+      const fontSize = Number(font.match(/(\d+)px/)?.[1] ?? 0)
+      if (touchesAtFontSize(fontSize, character)) pixels[3] = 255
     }),
     getImageData: vi.fn(() => ({ data: pixels })),
   }
@@ -26,6 +27,7 @@ function mockCanvas(touchesAtFontSize: (fontSize: number, character: string) => 
       getContext: () => context,
     }),
   })
+  return context
 }
 
 afterEach(() => vi.unstubAllGlobals())
@@ -56,5 +58,13 @@ describe('rasterizeCharacters adaptive sizing', () => {
 
     expect(result.fontSize).toBe(32)
     expect(result.clipped).toEqual([0x41])
+  })
+
+  it('passes the selected weight to the canvas font', () => {
+    const context = mockCanvas(() => false)
+
+    rasterizeCharacters('Roboto Mono', 12, 16, [0x41], 16, 600)
+
+    expect(context.font).toBe('600 16px "Roboto Mono"')
   })
 })

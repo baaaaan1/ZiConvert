@@ -6,7 +6,7 @@ export interface RasterizedFont {
   fontSize: number
 }
 
-export function rasterizeCharacters(fontFamily: string, width: number, height: number, codePoints: number[], requestedFontSize: number): RasterizedFont {
+export function rasterizeCharacters(fontFamily: string, width: number, height: number, codePoints: number[], requestedFontSize: number, fontWeight = 400): RasterizedFont {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -21,7 +21,7 @@ export function rasterizeCharacters(fontFamily: string, width: number, height: n
   let fontSize = maxFontSize
   if (maxFontSize <= 30) {
     for (; fontSize > 1; fontSize -= 1) {
-      context.font = `${fontSize}px "${fontFamily.replaceAll('"', '')}"`
+      context.font = `${fontWeight} ${fontSize}px "${fontFamily.replaceAll('"', '')}"`
       const touchesBoundary = codePoints.some(codePoint => {
         context.clearRect(0, 0, width, height)
         context.fillText(String.fromCharCode(codePoint), width / 2, height / 2)
@@ -37,7 +37,7 @@ export function rasterizeCharacters(fontFamily: string, width: number, height: n
       if (!touchesBoundary) break
     }
   }
-  context.font = `${fontSize}px "${fontFamily.replaceAll('"', '')}"`
+  context.font = `${fontWeight} ${fontSize}px "${fontFamily.replaceAll('"', '')}"`
 
   const glyphs: GlyphBitmap[] = []
   const clipped: number[] = []
