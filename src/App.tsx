@@ -66,6 +66,7 @@ function App() {
   const [width, setWidth] = useState(defaults.width)
   const [height, setHeight] = useState(defaults.height)
   const [fontSize, setFontSize] = useState(26)
+  const [rasterizedFontSize, setRasterizedFontSize] = useState(26)
   const [characterMode, setCharacterMode] = useState<CharacterMode>('ascii')
   const [customCharacters, setCustomCharacters] = useState('0123456789')
   const [fontSource, setFontSource] = useState<'local' | 'fontsource'>('local')
@@ -113,6 +114,7 @@ function App() {
       const result = rasterizeCharacters(font.family, width, height, codePoints, fontSize)
       setGlyphData(result.glyphs)
       setClipped(result.clipped)
+      setRasterizedFontSize(result.fontSize)
       setError('')
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The font could not be rendered.')
@@ -165,7 +167,7 @@ function App() {
     try { return getCharacterSet(characterMode, customCharacters) } catch { return [] }
   }, [characterMode, customCharacters])
   const characterScope = characterMode === 'ascii' ? 'ASCII' : characterMode === 'all' ? 'Latin1' : 'Custom'
-  const filenameSuffix = `-${fontSize}px-${characterScope}`
+  const filenameSuffix = `-${rasterizedFontSize}px-${characterScope}`
   const outputName = `${safeName(fontName)}${filenameSuffix}`
   const estimatedSize = glyphData.length
     ? ziVersion === 3
@@ -380,6 +382,7 @@ function App() {
             <label className="field"><span>Height <small>PX</small></span><span className="number-wrap"><input type="number" min="1" max="255" value={height} onChange={event => setHeight(Number(event.target.value))} /><span>↕</span></span></label>
           </div>
           <label className="field font-size-field"><span>Quick font size <small>PRESET</small></span><select className="text-input preset-select" value={SIZE_PRESETS.findIndex(preset => preset.fontSize === fontSize && preset.width === width && preset.height === height)} onChange={event => applyPreset(Number(event.target.value))}><option value={-1}>Custom dimensions</option>{SIZE_PRESETS.map((preset, index) => <option key={preset.fontSize} value={index}>{preset.label} · cell {preset.width} × {preset.height}</option>)}</select></label>
+          {rasterizedFontSize < fontSize && <p className="field-help">Font otomatis disesuaikan ke {rasterizedFontSize} px agar semua glyph muat di dalam cell {width} × {height} px.</p>}
 
           <div className="section-divider" />
           <div className="panel-heading compact"><div><span className="step-label">STEP 03</span><h2>Character scope</h2></div><span className="mini-pill">{characterSet.length} GLYPHS</span></div>
@@ -432,7 +435,7 @@ function App() {
           </div>
           <div className="simulator-output">
             <div className="stage-toolbar"><span><span className="stage-dot" />FIXED CELL · {font ? font.name : 'NO FONT LOADED'}</span><span>{width} × {height} PX</span></div>
-            {font ? <div className="typing-cells" aria-label="Typing preview" style={{ '--cell-width': `${width * simulatorScale}px`, '--cell-height': `${height * simulatorScale}px`, '--cell-font-size': `${fontSize * simulatorScale}px`, '--preview-font': font.family } as CSSProperties}>
+            {font ? <div className="typing-cells" aria-label="Typing preview" style={{ '--cell-width': `${width * simulatorScale}px`, '--cell-height': `${height * simulatorScale}px`, '--cell-font-size': `${rasterizedFontSize * simulatorScale}px`, '--preview-font': font.family } as CSSProperties}>
               {simulatorCharacters.length ? simulatorCharacters.map((character, index) => character === '\n' ? <span className="typing-break" key={`${index}-break`} /> : <span className={`typing-cell ${unsupportedCharacters.includes(character) ? 'unsupported' : ''}`} key={`${index}-${character}`} title={unsupportedCharacters.includes(character) ? `U+${character.codePointAt(0)!.toString(16).toUpperCase()} is outside the selected character set` : undefined}>{character === ' ' ? <i /> : character}</span>) : <span className="simulator-placeholder">Start typing to test your font...</span>}
             </div> : <div className="simulator-empty"><Type size={19} /><span>Load a font to preview your typing.</span></div>}
             <div className="simulator-meta"><span><b>{simulatorCharacters.length}</b> characters</span><span><b>{width} × {height}</b> px cell</span><span className={unsupportedCharacters.length ? 'unsupported-note' : ''}>{unsupportedCharacters.length ? `${unsupportedCharacters.length} character(s) outside character set` : 'All characters included'}</span></div>
