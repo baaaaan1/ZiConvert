@@ -20,20 +20,21 @@ export function rasterizeCharacters(fontFamily: string, width: number, height: n
 
   let fontSize = maxFontSize
   if (maxFontSize <= 30) {
-    for (let attempt = 0; attempt < maxFontSize; attempt += 1) {
+    for (; fontSize > 1; fontSize -= 1) {
       context.font = `${fontSize}px "${fontFamily.replaceAll('"', '')}"`
-      const scale = codePoints.reduce((fit, codePoint) => {
-        const metrics = context.measureText(String.fromCharCode(codePoint))
-        return Math.min(
-          fit,
-          metrics.actualBoundingBoxLeft > width / 2 ? width / 2 / metrics.actualBoundingBoxLeft : 1,
-          metrics.actualBoundingBoxRight > width / 2 ? width / 2 / metrics.actualBoundingBoxRight : 1,
-          metrics.actualBoundingBoxAscent > height / 2 ? height / 2 / metrics.actualBoundingBoxAscent : 1,
-          metrics.actualBoundingBoxDescent > height / 2 ? height / 2 / metrics.actualBoundingBoxDescent : 1,
-        )
-      }, 1)
-      if (scale >= 1) break
-      fontSize = Math.max(1, Math.floor(fontSize * scale))
+      const touchesBoundary = codePoints.some(codePoint => {
+        context.clearRect(0, 0, width, height)
+        context.fillText(String.fromCharCode(codePoint), width / 2, height / 2)
+        const rgba = context.getImageData(0, 0, width, height).data
+        for (let x = 0; x < width; x += 1) {
+          if (rgba[x * 4 + 3] || rgba[((height - 1) * width + x) * 4 + 3]) return true
+        }
+        for (let y = 1; y < height - 1; y += 1) {
+          if (rgba[y * width * 4 + 3] || rgba[(y * width + width - 1) * 4 + 3]) return true
+        }
+        return false
+      })
+      if (!touchesBoundary) break
     }
   }
   context.font = `${fontSize}px "${fontFamily.replaceAll('"', '')}"`
@@ -44,15 +45,20 @@ export function rasterizeCharacters(fontFamily: string, width: number, height: n
     context.clearRect(0, 0, width, height)
     const character = String.fromCharCode(codePoint)
     const metrics = context.measureText(character)
-    if (metrics.actualBoundingBoxLeft > width / 2 || metrics.actualBoundingBoxRight > width / 2 || metrics.actualBoundingBoxAscent > height / 2 || metrics.actualBoundingBoxDescent > height / 2) {
-      clipped.push(codePoint)
-    }
     context.fillText(character, width / 2, height / 2)
     const rgba = context.getImageData(0, 0, width, height).data
     const pixels = new Uint8Array(width * height)
     for (let pixel = 0; pixel < pixels.length; pixel += 1) {
       pixels[pixel] = Math.round(rgba[pixel * 4 + 3] * 7 / 255)
     }
+    let touchesBoundary = false
+    for (let x = 0; x < width && !touchesBoundary; x += 1) {
+      touchesBoundary = rgba[x * 4 + 3] > 0 || rgba[((height - 1) * width + x) * 4 + 3] > 0
+    }
+    for (let y = 1; y < height - 1 && !touchesBoundary; y += 1) {
+      touchesBoundary = rgba[y * width * 4 + 3] > 0 || rgba[(y * width + width - 1) * 4 + 3] > 0
+    }
+    if (touchesBoundary) clipped.push(codePoint)
     glyphs.push({ codePoint, width, height, pixels, advanceWidth: Math.max(1, Math.min(width, Math.round(metrics.width))) })
   }
   return { glyphs, clipped, fontSize }
