@@ -15,9 +15,14 @@
 
 ZiConvert runs font conversion in your browser. Local font files are not uploaded to a conversion server. You can load a font from your device or browse hosted fonts through [Fontsource](https://fontsource.org/).
 
+## Screenshot
+
+![ZiConvert full-page screenshot in dark mode](public/ziconvert-screenshot.png)
+
 ## Contents
 
 - [Highlights](#highlights)
+- [Screenshot](#screenshot)
 - [Get started](#get-started)
 - [How to use](#how-to-use)
 - [Supported formats](#supported-formats)
@@ -120,7 +125,8 @@ ZiConvert/
 │       └── ci.yml              # GitHub Actions test and build workflow
 ├── public/
 │   ├── favicon.svg             # Browser and navbar icon
-│   └── qr-code.svg             # Tako donation QR code
+│   ├── qr-code.svg             # Tako donation QR code
+│   └── ziconvert-screenshot.png # Full-page dark mode screenshot
 ├── src/
 │   ├── lib/
 │   │   ├── fonts/
